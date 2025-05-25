@@ -5,6 +5,7 @@ from ai_t1 import Ui_MainWindow
 import logging
 import pyaudio
 import requests
+from qt_material import apply_stylesheet
 
 #define
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -17,8 +18,11 @@ class MyWidget(QtWidgets.QMainWindow):
         self.setUpdatesEnabled(True)
         self.ui = Ui_MainWindow()       
         self.ui.setupUi(self)
-        with open("style.qss", "r", encoding="utf-8") as f:
-            self.setStyleSheet(f.read())
+
+        #樣式表
+        apply_stylesheet(app, theme='dark_amber.xml')
+        # with open("style.qss", "r", encoding="utf-8") as f:
+        #     self.setStyleSheet(f.read())
 
         #影像相關
         self.ocv = True                 # 啟用 OpenCV
