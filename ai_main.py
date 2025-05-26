@@ -44,17 +44,16 @@ class MyWidget(QtWidgets.QMainWindow):
     def closeEvent(self):
         self.ocv = False
 
+    def rename(self):
+        return datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+
+    #影像處理區
     def take_pic(self):
         self.photo = True
         if not os.path.exists('.//photo_tmp'):
             os.mkdir('.//photo_tmp')
             logging.info("初次建立圖片暫存...")
         logging.info("拍照中...")
-
-    def rename(self):
-        return datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-
-    #影像處理區
     def opencv(self):
         try:
             cap = cv2.VideoCapture(0)
