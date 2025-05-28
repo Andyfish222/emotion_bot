@@ -8,6 +8,7 @@ import pyaudio
 import requests
 from qt_material import apply_stylesheet
 from openai import OpenAI
+import sqlite3
 
 #define
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -19,6 +20,49 @@ client = OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
 class StreamSignalEmitter(QObject):
     new_text = pyqtSignal(str)
 
+#資料庫相關
+def init_db():
+    conn = sqlite3.connect("chat_history.db")
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            role TEXT CHECK(role IN ('user', 'assistant')) NOT NULL,
+            content TEXT NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
+    logging.info("已初始化資料庫 chat_history.db")
+
+def save_message(user_id: str, role: str, content: str):
+    conn = sqlite3.connect("chat_history.db")
+    c = conn.cursor()
+    c.execute("INSERT INTO messages (user_id, role, content) VALUES (?, ?, ?)",
+            (user_id, role, content))
+    conn.commit()
+    conn.close()
+    logging.info(f"已儲存訊息: {role} - {content}")
+
+def get_recent_messages(user_id: str, limit: int = 10) -> list:
+    conn = sqlite3.connect("chat_history.db")
+    c = conn.cursor()
+    c.execute('''
+        SELECT role, content FROM messages
+        WHERE user_id = ?
+        ORDER BY timestamp DESC
+        LIMIT ?
+    ''', (user_id, limit))
+    rows = c.fetchall()
+    conn.close()
+
+    final_msg = [{"role": role, "content": content} for role, content in reversed(rows)]
+    logging.info(f"歷史運用訊息: {final_msg}")
+    # 反轉回時間順序
+    return final_msg
+
 class MyWidget(QtWidgets.QMainWindow):
     def __init__(self):
         # 建立初始化 UI 類別實體、初始化變數
@@ -26,7 +70,13 @@ class MyWidget(QtWidgets.QMainWindow):
         self.setUpdatesEnabled(True)
         self.ui = Ui_MainWindow()       
         self.ui.setupUi(self)
-        self.reply_msg = ""  # 初始化模型回應訊息
+
+        #初始化資料
+        self.reply_msg = ""               # 初始化模型回應
+        self.new_model_message = ""       # 初始化模型新訊息
+        init_db()                         # 初始化資料庫
+        self.memory_limit = 30            # 設定記憶限制，預設為 30 條訊息
+        self.user_id = "1"                # 設定使用者 ID，預設為 1
 
         #建立訊號發射器(LLM回應)
         self.signals = StreamSignalEmitter()
@@ -65,30 +115,26 @@ class MyWidget(QtWidgets.QMainWindow):
 
     #模型回應區------------------------------------------
     def get_llm_reply(self,user_input,image_result,voice_result):
+        default_msgs = [{"role": "system", "content": '''你是一位情緒智能助手，能夠理解和回應用戶的情感需求，並總是以繁體中文回應。用戶輸入可能包含表情狀態、聲音狀態和用戶回應，你的目標是用好朋友的口吻來使用戶開心。'''}]
+        history_msgs = get_recent_messages(user_id=self.user_id, limit=self.memory_limit)  # 獲取最近的對話歷史
+        if history_msgs == []: history_msgs = [{"role": "system", "content": "沒有歷史對話"}]  # 如果沒有歷史對話，則使用預設訊息
+        now_msgs = [{"role": "user", "content": f'''表情狀態:{image_result},聲音狀態:{voice_result},用戶回應:{user_input}'''}]  # 當前用戶輸入訊息
+
         completion = client.chat.completions.create(
             model="model-identifier",
-            messages=[
-                {"role": "system", "content": '''你是一位情緒智能助手，能夠理解和回應用戶的情感需求，並總是以繁體中文回應。
-                用戶輸入可能包含表情狀態、聲音狀態和文字描述，你的目標是用好朋友的口吻來使用戶開心。'''},
-                {"role": "user", "content": 
-                    f'''表情狀態:{image_result},
-                        聲音狀態:{voice_result},
-                        用戶回應:{user_input}'''
-                },
-                # {"role": "assistant", "content": "當你心情不好時，可以試著做一些讓自己放鬆的事情，比如聽音樂、散步或是和朋友聊天。也可以嘗試寫下你的感受，這樣有助於釐清思緒。最重要的是，給自己一些時間去感受和處理這些情緒。"},
-            ],
+            messages=default_msgs+ history_msgs + now_msgs,  # 合併系統訊息、歷史訊息和當前訊息
             temperature=0.7,
             stream=True,  # 啟用串流模式
         )
         return completion
+    
     def send_msg(self):
         logging.info(f"用戶輸入: {self.ui.msg_input.text()}")
+        save_message(user_id=self.user_id,role="user",content=self.ui.msg_input.text()) #user msg
+
         self.start_stream()             # 啟動背景任務來處理模型回應
         self.ui.msg_input.clear()
         self.ui.msg_input.setFocus()    # 清除輸入框後重新聚焦
-
-        # self.ui.model_response.append("\n\n---------------------------------------------------------------------------------------------------------------------------------------------\n\n")  # 將模型回應加入到對話框中
-        # self.reply_msg = ""             # 清空模型回應變數
     
     def start_stream(self):
         llm_thread = threading.Thread(target=self.stream_task, daemon=True)
@@ -109,9 +155,12 @@ class MyWidget(QtWidgets.QMainWindow):
             self.signals.new_text.emit(text)
             if chunk.choices[0].finish_reason == "stop":
                 self.signals.new_text.emit("\n\n---------------------------------------------------------------------------------------------------------------------------------------------\n\n")  # 將模型回應加入到對話框中
-                self.reply_msg = ""             # 清空模型回應變數
+                self.reply_msg = ""                 # 清空模型回應變數
+                save_message(user_id=self.user_id, role="assistant", content=self.new_model_message) #assistant msg
+                self.new_model_message = ""         # 清空新訊息變數
 
     def update_browser(self, text):
+        self.new_model_message += text
         self.ui.model_response.insertPlainText(text)
         self.ui.model_response.moveCursor(QTextCursor.MoveOperation.End)  # 滾動到最新的回應
 
