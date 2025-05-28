@@ -1,9 +1,8 @@
 from PyQt6 import QtWidgets
 from PyQt6.QtGui import *
-from PyQt6.QtCore import pyqtSignal, QObject
-import sys, cv2, threading, datetime, os, wave
+import sys, cv2, threading, datetime, os, wave, random
 from ai_t1 import Ui_MainWindow 
-import logging,threading
+import logging
 import pyaudio
 import requests
 from qt_material import apply_stylesheet
@@ -15,10 +14,6 @@ voice_url = "http://localhost:5000/predict_voice"
 image_url = "http://localhost:5000/predict_image"
 client = OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
 
-# 中介物件：用來從非Qt執行緒發射訊號回主線程
-class StreamSignalEmitter(QObject):
-    new_text = pyqtSignal(str)
-
 class MyWidget(QtWidgets.QMainWindow):
     def __init__(self):
         # 建立初始化 UI 類別實體、初始化變數
@@ -28,15 +23,10 @@ class MyWidget(QtWidgets.QMainWindow):
         self.ui.setupUi(self)
         self.reply_msg = ""  # 初始化模型回應訊息
 
-        #建立訊號發射器(LLM回應)
-        self.signals = StreamSignalEmitter()
-        self.signals.new_text.connect(self.update_browser)
-
         #樣式表
         apply_stylesheet(app, theme='dark_amber.xml')
         # with open("style.qss", "r", encoding="utf-8") as f:
         #     self.setStyleSheet(f.read())
-        self.ui.model_response.setLineWrapMode(self.ui.model_response.LineWrapMode.NoWrap)  # 設定不自動換行
 
         #影像相關
         self.ocv = True                 # 啟用 OpenCV
@@ -78,42 +68,23 @@ class MyWidget(QtWidgets.QMainWindow):
                 # {"role": "assistant", "content": "當你心情不好時，可以試著做一些讓自己放鬆的事情，比如聽音樂、散步或是和朋友聊天。也可以嘗試寫下你的感受，這樣有助於釐清思緒。最重要的是，給自己一些時間去感受和處理這些情緒。"},
             ],
             temperature=0.7,
-            stream=True,  # 啟用串流模式
         )
-        return completion
+        return completion.choices[0].message.content
     def send_msg(self):
-        logging.info(f"用戶輸入: {self.ui.msg_input.text()}")
-        self.start_stream()             # 啟動背景任務來處理模型回應
-        self.ui.msg_input.clear()
-        self.ui.msg_input.setFocus()    # 清除輸入框後重新聚焦
-
-        # self.ui.model_response.append("\n\n---------------------------------------------------------------------------------------------------------------------------------------------\n\n")  # 將模型回應加入到對話框中
-        # self.reply_msg = ""             # 清空模型回應變數
-    
-    def start_stream(self):
-        llm_thread = threading.Thread(target=self.stream_task, daemon=True)
-        llm_thread.start() # 在 threading.Thread 裡啟動背景任務
-
-    def stream_task(self):
         try:
             self.reply_msg = self.get_llm_reply(
                 user_input = self.ui.msg_input.text(),
                 image_result = self.ui.face_state.text(),
                 voice_result = self.ui.voice_state.text()
             )
+            logging.info(f"用戶輸入: {self.ui.msg_input.text()}")
             logging.info(f"模型回應: {self.reply_msg}")
         except Exception as e:
             logging.info(f"模型回應失敗: {e}")
-        for chunk in self.reply_msg:  
-            text = chunk.choices[0].delta.content
-            self.signals.new_text.emit(text)
-            if chunk.choices[0].finish_reason == "stop":
-                self.signals.new_text.emit("\n\n---------------------------------------------------------------------------------------------------------------------------------------------\n\n")  # 將模型回應加入到對話框中
-                self.reply_msg = ""             # 清空模型回應變數
-
-    def update_browser(self, text):
-        self.ui.model_response.insertPlainText(text)
-        self.ui.model_response.moveCursor(QTextCursor.MoveOperation.End)  # 滾動到最新的回應
+        self.ui.model_response.append(self.reply_msg+"\n---------------------------------------------------------------------------------------------------------------------------------------------")  # 將模型回應加入到對話框中
+        self.ui.msg_input.clear()
+        self.reply_msg = ""             # 清空模型回應變數
+        self.ui.msg_input.setFocus()    # 清除輸入框後重新聚焦
 
     #影像處理區------------------------------------------
     def take_pic(self):
