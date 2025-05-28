@@ -2,3 +2,11 @@ pyqt6
 opencv-python
 pyaudio
 qt_material
+pydub
+soundfile
+torchaudio
+torch
+flask
+deepface
+transformers
+openai

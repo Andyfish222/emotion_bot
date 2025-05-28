@@ -6,18 +6,22 @@ import logging
 import pyaudio
 import requests
 from qt_material import apply_stylesheet
+from openai import OpenAI
 
 #define
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-voice_url = "http://localhost:5000/predict"
+voice_url = "http://localhost:5000/predict_voice"
+image_url = "http://localhost:5000/predict_image"
+client = OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
 
 class MyWidget(QtWidgets.QMainWindow):
     def __init__(self):
-        # 建立初始化 UI 類別實體
+        # 建立初始化 UI 類別實體、初始化變數
         super().__init__()
         self.setUpdatesEnabled(True)
         self.ui = Ui_MainWindow()       
         self.ui.setupUi(self)
+        self.reply_msg = ""  # 初始化模型回應訊息
 
         #樣式表
         apply_stylesheet(app, theme='dark_amber.xml')
@@ -40,20 +44,56 @@ class MyWidget(QtWidgets.QMainWindow):
         self.ui.take_pic.clicked.connect(self.take_pic)
         self.ui.start_rec.clicked.connect(self.start_recording)
         self.ui.stop_rec.clicked.connect(self.stop_recording)
+        self.ui.send_msg.clicked.connect(self.send_msg)
 
     def closeEvent(self):
         self.ocv = False
 
+    #暫存檔名:當下時間
     def rename(self):
         return datetime.datetime.now().strftime("%Y%m%d%H%M%S")
 
-    #影像處理區
+    #模型回應區------------------------------------------
+    def get_llm_reply(self,user_input,image_result,voice_result):
+        completion = client.chat.completions.create(
+            model="model-identifier",
+            messages=[
+                {"role": "system", "content": '''你是一位情緒智能助手，能夠理解和回應用戶的情感需求，並總是以繁體中文回應。
+                用戶輸入可能包含表情狀態、聲音狀態和文字描述，你的目標是用好朋友的口吻來使用戶開心。'''},
+                {"role": "user", "content": 
+                    f'''表情狀態:{image_result},
+                        聲音狀態:{voice_result},
+                        用戶回應:{user_input}'''
+                },
+                # {"role": "assistant", "content": "當你心情不好時，可以試著做一些讓自己放鬆的事情，比如聽音樂、散步或是和朋友聊天。也可以嘗試寫下你的感受，這樣有助於釐清思緒。最重要的是，給自己一些時間去感受和處理這些情緒。"},
+            ],
+            temperature=0.7,
+        )
+        return completion.choices[0].message.content
+    def send_msg(self):
+        try:
+            self.reply_msg = self.get_llm_reply(
+                user_input = self.ui.msg_input.text(),
+                image_result = self.ui.face_state.text(),
+                voice_result = self.ui.voice_state.text()
+            )
+            logging.info(f"用戶輸入: {self.ui.msg_input.text()}")
+            logging.info(f"模型回應: {self.reply_msg}")
+        except Exception as e:
+            logging.info(f"模型回應失敗: {e}")
+        self.ui.model_response.append(self.reply_msg+"\n---------------------------------------------------------------------------------------------------------------------------------------------")  # 將模型回應加入到對話框中
+        self.ui.msg_input.clear()
+        self.reply_msg = ""             # 清空模型回應變數
+        self.ui.msg_input.setFocus()    # 清除輸入框後重新聚焦
+
+    #影像處理區------------------------------------------
     def take_pic(self):
         self.photo = True
         if not os.path.exists('.//photo_tmp'):
             os.mkdir('.//photo_tmp')
             logging.info("初次建立圖片暫存...")
         logging.info("拍照中...")
+
     def opencv(self):
         try:
             cap = cv2.VideoCapture(0)
@@ -72,14 +112,30 @@ class MyWidget(QtWidgets.QMainWindow):
                 name = self.rename()                               # 重新命名檔案
                 cv2.imwrite(f'.//photo_tmp//{name}.jpg', frame)    # 儲存圖片
                 self.photo = False
-                self.ui.pic_state.setText(f"已拍照：{name}.jpg")                                 
+                self.ui.pic_state.setText(f"已拍照：{name}.jpg")       
+
+                # 將圖片轉成 JPEG 格式後送出
+                _, img_encoded = cv2.imencode('.jpg', frame)
+                files = {'image': ('frame.jpg', img_encoded.tobytes(), 'image/jpeg')}
+                try:
+                    response = requests.post(image_url, files=files)
+                    if response.status_code == 200:
+                        result = response.json()
+                        face_emotions = result[0]['emotion']
+                        print("辨識結果：", face_emotions)
+                        self.ui.face_state.setText(f"{max(face_emotions, key=face_emotions.get)}")  
+                    else:
+                        print(f"API 錯誤：{response.status_code}", response.json())
+                except Exception as e:
+                    print("無法連接 API：", e)   
+
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             height, width, channel = frame.shape
             bytesPerline = channel * width
             qimg = QImage(frame, width, height, bytesPerline, QImage.Format.Format_RGB888)
             self.ui.cam_feed.setPixmap(QPixmap.fromImage(qimg))
 
-    #錄音處理區
+    #錄音處理區------------------------------------------
     def start_recording(self):
         self.ui.start_rec.setDisabled(True)
         self.ui.stop_rec.setDisabled(False)
@@ -127,7 +183,9 @@ class MyWidget(QtWidgets.QMainWindow):
             try:
                 files = {"file": open(f'.//voice_tmp//{tmp_name}.wav', "rb")}
                 response = requests.post(voice_url, files=files)
-                logging.info(f"API 回應: {response.json()}")
+                voice_emotions = response.json()
+                logging.info(f"API 回應: {voice_emotions}")
+                self.ui.voice_state.setText(f"{max(voice_emotions, key=voice_emotions.get)}") 
             except Exception as e:
                 logging.error(f"API 請求失敗: {e}")
             # finally:

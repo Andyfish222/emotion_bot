@@ -63,14 +63,42 @@
         </font>
        </property>
        <property name="text">
-        <string>情緒狀態</string>
+        <string>表情狀態</string>
        </property>
       </widget>
      </item>
      <item>
-      <widget class="QLabel" name="emotion_state">
+      <widget class="QLabel" name="face_state">
        <property name="text">
-        <string>等待狀態輸入</string>
+        <string>等待中</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="Line" name="line_6">
+       <property name="orientation">
+        <enum>Qt::Vertical</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="label_3">
+       <property name="font">
+        <font>
+         <pointsize>10</pointsize>
+         <weight>75</weight>
+         <bold>true</bold>
+        </font>
+       </property>
+       <property name="text">
+        <string>聲音狀態</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="voice_state">
+       <property name="text">
+        <string>等待中</string>
        </property>
       </widget>
      </item>
@@ -183,7 +211,7 @@
      </item>
     </layout>
    </widget>
-   <widget class="QTextBrowser" name="model_respose">
+   <widget class="QTextBrowser" name="model_response">
     <property name="geometry">
      <rect>
       <x>400</x>
@@ -358,7 +386,7 @@
      <x>0</x>
      <y>0</y>
      <width>1280</width>
-     <height>25</height>
+     <height>21</height>
     </rect>
    </property>
   </widget>

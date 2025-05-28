@@ -7,6 +7,8 @@ import torchaudio
 import torch
 import os
 import numpy as np
+from deepface import DeepFace
+import cv2
 
 # 手動指定 ffmpeg 路徑
 AudioSegment.converter = which("ffmpeg")
@@ -44,8 +46,9 @@ def predictEmotion(wavPath):
 # 初始化 Flask
 app = Flask(__name__)
 
-@app.route("/predict", methods=["POST"])
-def predictRoute():
+#聲音辨識 API
+@app.route("/predict_voice", methods=["POST"])
+def predict_voice():
     if "file" not in request.files:
         return jsonify({"error": "請上傳 MP3 或 WAV 音檔"}), 400
 
@@ -69,28 +72,64 @@ def predictRoute():
 
     return jsonify({label: round(score, 4) for label, score in prediction})
 
+#影像辨識 API
+@app.route("/predict_image", methods=["POST"])
+def predict_image():
+    try:
+        # 取得前端傳來的圖像
+        file = request.files['image']
+        if not file:
+            return jsonify({'error': '沒有收到圖片'}), 400
+
+        # 將圖像轉換為 numpy array
+        file_bytes = np.frombuffer(file.read(), np.uint8)
+        img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+
+        # 分析圖像中的情緒（不強制一定要偵測到臉）
+        result = DeepFace.analyze(
+            img_path=img,
+            actions=['emotion'],
+            enforce_detection=False
+        )
+
+        # 將 numpy 中的 float32 轉成 Python float，避免 JSON 出錯
+        def convert(o):
+            if isinstance(o, np.float32) or isinstance(o, np.float64):
+                return float(o)
+            if isinstance(o, dict):
+                return {k: convert(v) for k, v in o.items()}
+            if isinstance(o, list):
+                return [convert(i) for i in o]
+            return o
+
+        result = convert(result)
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({'error': f'DeepFace analyze error: {str(e)}'}), 500
+
 if __name__ == "__main__":
     # 設為 True 啟動 API - False 則跑 CLI 預測流程
     runAsApi = True
 
     if runAsApi:
         app.run(port=5000, use_reloader=False)
-    else:
-        inputPath = "Default2.wav"
-        wavPath = "Temp.wav"
+    # else:
+    #     inputPath = "Default2.wav"
+    #     wavPath = "Temp.wav"
 
-        if inputPath.endswith(".mp3"):
-            convertMp3ToWav(inputPath, wavPath)
-        elif inputPath.endswith(".wav"):
-            wavPath = inputPath
-        else:
-            raise ValueError("請提供 MP3 或 WAV 檔案")
+    #     if inputPath.endswith(".mp3"):
+    #         convertMp3ToWav(inputPath, wavPath)
+    #     elif inputPath.endswith(".wav"):
+    #         wavPath = inputPath
+    #     else:
+    #         raise ValueError("請提供 MP3 或 WAV 檔案")
 
-        predictionResults = predictEmotion(wavPath)
+    #     predictionResults = predictEmotion(wavPath)
 
-        print("\n辨識結果：")
-        for label, score in predictionResults:
-            print(f"{label}: {score:.4f}")
+    #     print("\n辨識結果：")
+    #     for label, score in predictionResults:
+    #         print(f"{label}: {score:.4f}")
 
-        if inputPath.endswith(".mp3"):
-            os.remove(wavPath)
+    #     if inputPath.endswith(".mp3"):
+    #         os.remove(wavPath)
