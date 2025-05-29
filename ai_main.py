@@ -5,7 +5,7 @@ import sys, cv2, threading, datetime, os, wave
 from ai_t1 import Ui_MainWindow 
 import logging,threading
 import pyaudio
-import requests
+import requests,re 
 from qt_material import apply_stylesheet
 from openai import OpenAI
 import sqlite3
@@ -19,6 +19,7 @@ client = OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
 # 中介物件：用來從非Qt執行緒發射訊號回主線程
 class StreamSignalEmitter(QObject):
     new_text = pyqtSignal(str)
+    del_new_msg = pyqtSignal()
 
 #資料庫相關
 def init_db():
@@ -81,6 +82,7 @@ class MyWidget(QtWidgets.QMainWindow):
         #建立訊號發射器(LLM回應)
         self.signals = StreamSignalEmitter()
         self.signals.new_text.connect(self.update_browser)
+        self.signals.del_new_msg.connect(self.del_nmsg) 
 
         #樣式表
         apply_stylesheet(app, theme='dark_amber.xml')
@@ -92,13 +94,14 @@ class MyWidget(QtWidgets.QMainWindow):
         self.ocv = True                 # 啟用 OpenCV
         self.photo= False               # 拍照狀態
 
-        #錄音相關
+        #音訊相關
         self.chunk = 1024                     # 記錄聲音的樣本區塊大小
         self.sample_format = pyaudio.paInt16  # 樣本格式，可使用 paFloat32、paInt32、paInt24、paInt16、paInt8、paUInt8、paCustomFormat
         self.channels = 1                     # 聲道數量
         self.fs = 44100                       # 取樣頻率，常見值為 44100 ( CD )、48000 ( DVD )、22050、24000、12000 和 11025。
-        # self.seconds = 5                      # 錄音秒數
+        # self.seconds = 5                    # 錄音秒數
         self.run = False
+        self.is_tts=False                     # 是否啟用 TTS 語音合成
 
         #按鈕動作區
         self.ui.take_pic.clicked.connect(self.take_pic)
@@ -154,15 +157,38 @@ class MyWidget(QtWidgets.QMainWindow):
             text = chunk.choices[0].delta.content
             self.signals.new_text.emit(text)
             if chunk.choices[0].finish_reason == "stop":
-                self.signals.new_text.emit("\n\n---------------------------------------------------------------------------------------------------------------------------------------------\n\n")  # 將模型回應加入到對話框中
-                self.reply_msg = ""                 # 清空模型回應變數
+                self.reply_msg = ""                                               # 清空模型回應變數
                 save_message(user_id=self.user_id, role="assistant", content=self.new_model_message) #assistant msg
-                self.new_model_message = ""         # 清空新訊息變數
+                try:
+                    if self.is_tts:
+                        clean_txt = self.remove_emoji_simple(text=self.new_model_message)
+                        _ = requests.post("http://localhost:5000/speak",data={"text": f"{clean_txt}"})  # TTS朗讀模型回應
+                except Exception as e:
+                    logging.error(f"TTS模型回應失敗: {e}")
+                self.signals.del_new_msg.emit()
+                self.ui.model_response.insertPlainText("\n\n---------------------------------------------------------------------------------------------------------------------------------------------\n\n")
+                self.ui.model_response.moveCursor(QTextCursor.MoveOperation.End)  # 滾動到最新的回應
 
     def update_browser(self, text):
         self.new_model_message += text
         self.ui.model_response.insertPlainText(text)
         self.ui.model_response.moveCursor(QTextCursor.MoveOperation.End)  # 滾動到最新的回應
+    
+    def del_nmsg(self):
+        self.new_model_message = ""
+        logging.info("清空新訊息變數")
+    
+    def remove_emoji_simple(self,text):
+        """
+        簡單版本：只保留字母、數字、中文和基本標點符號
+        """
+        # 只保留字母、數字、中文字符和基本標點符號
+        clean_text = re.sub(r'[^\u4e00-\u9fff\w\s.,！？，。!?;:()\[\]{}\'\"]+', '', text)
+        
+        # 移除多餘的空格
+        clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+        
+        return clean_text
 
     #影像處理區------------------------------------------
     def take_pic(self):

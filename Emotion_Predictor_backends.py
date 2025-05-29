@@ -10,6 +10,13 @@ import numpy as np
 from deepface import DeepFace
 import cv2
 
+# 是否使用 TTS 模型
+is_tts = False  
+if is_tts:
+    from TTS.api import TTS
+    import sounddevice as sd
+    tts = TTS("tts_models/zh-CN/baker/tacotron2-DDC-GST", progress_bar=False,gpu=True)
+
 # 手動指定 ffmpeg 路徑
 AudioSegment.converter = which("ffmpeg")
 AudioSegment.ffprobe = which("ffprobe")
@@ -107,6 +114,21 @@ def predict_image():
 
     except Exception as e:
         return jsonify({'error': f'DeepFace analyze error: {str(e)}'}), 500
+
+# TTS 語音合成 API
+@app.route('/speak', methods=['POST'])
+def speak():
+    if is_tts:
+        text = request.form.get('text', '')
+        if text.strip():
+            # 產生語音波形 (22050Hz)
+            wav = tts.tts(text)
+            sd.play(wav, samplerate=22050)
+            sd.wait()
+            return f"已播放：{text}"
+        return "請輸入文字！"
+    else:
+        return "TTS 未啟用！", 503
 
 if __name__ == "__main__":
     # 設為 True 啟動 API - False 則跑 CLI 預測流程
