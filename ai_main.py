@@ -60,7 +60,6 @@ def get_recent_messages(user_id: str, limit: int = 10) -> list:
     conn.close()
 
     final_msg = [{"role": role, "content": content} for role, content in reversed(rows)]
-    logging.info(f"歷史運用訊息: {final_msg}")
     # 反轉回時間順序
     return final_msg
 
@@ -86,8 +85,8 @@ class MyWidget(QtWidgets.QMainWindow):
 
         #樣式表
         apply_stylesheet(app, theme='dark_amber.xml')
-        # with open("style.qss", "r", encoding="utf-8") as f:
-        #     self.setStyleSheet(f.read())
+        with open("style.qss", "r", encoding="utf-8") as f:
+            self.setStyleSheet(f.read())
         self.ui.model_response.setLineWrapMode(self.ui.model_response.LineWrapMode.NoWrap)  # 設定不自動換行
 
         #影像相關
@@ -121,6 +120,8 @@ class MyWidget(QtWidgets.QMainWindow):
         default_msgs = [{"role": "system", "content": '''你是一位情緒智能助手，能夠理解和回應用戶的情感需求，並總是以繁體中文回應。用戶輸入可能包含表情狀態、聲音狀態和用戶回應，你的目標是用好朋友的口吻來使用戶開心。'''}]
         history_msgs = get_recent_messages(user_id=self.user_id, limit=self.memory_limit)  # 獲取最近的對話歷史
         if history_msgs == []: history_msgs = [{"role": "system", "content": "沒有歷史對話"}]  # 如果沒有歷史對話，則使用預設訊息
+        if len(history_msgs)==self.memory_limit and history_msgs[0]["role"]=="assistant": history_msgs.pop(0)  # 如果歷史對話超過限制，則刪除最舊的訊息，並確保是偶數條數據
+        logging.info(f"歷史運用訊息: {history_msgs}")
         now_msgs = [{"role": "user", "content": f'''表情狀態:{image_result},聲音狀態:{voice_result},用戶回應:{user_input}'''}]  # 當前用戶輸入訊息
 
         completion = client.chat.completions.create(
@@ -134,6 +135,7 @@ class MyWidget(QtWidgets.QMainWindow):
     def send_msg(self):
         logging.info(f"用戶輸入: {self.ui.msg_input.text()}")
         save_message(user_id=self.user_id,role="user",content=self.ui.msg_input.text()) #user msg
+        self.append_user_message(self.ui.model_response, self.ui.msg_input.text())
 
         self.start_stream()             # 啟動背景任務來處理模型回應
         self.ui.msg_input.clear()
@@ -142,6 +144,11 @@ class MyWidget(QtWidgets.QMainWindow):
     def start_stream(self):
         llm_thread = threading.Thread(target=self.stream_task, daemon=True)
         llm_thread.start() # 在 threading.Thread 裡啟動背景任務
+        self.ui.model_response.append("""
+                                        <div style="padding:8px; border-radius:10px; margin:5px 0;">
+                                            <b>助理：</b><br>
+                                        </div><br>
+                                      """)
 
     def stream_task(self):
         try:
@@ -156,27 +163,28 @@ class MyWidget(QtWidgets.QMainWindow):
         for chunk in self.reply_msg:  
             text = chunk.choices[0].delta.content
             self.signals.new_text.emit(text)
+            if text!= None: self.new_model_message += text
             if chunk.choices[0].finish_reason == "stop":
-                self.reply_msg = ""                                               # 清空模型回應變數
-                save_message(user_id=self.user_id, role="assistant", content=self.new_model_message) #assistant msg
                 try:
                     if self.is_tts:
                         clean_txt = self.remove_emoji_simple(text=self.new_model_message)
                         _ = requests.post("http://localhost:5000/speak",data={"text": f"{clean_txt}"})  # TTS朗讀模型回應
                 except Exception as e:
                     logging.error(f"TTS模型回應失敗: {e}")
+                save_message(user_id=self.user_id, role="assistant", content=self.new_model_message) #assistant msg
                 self.signals.del_new_msg.emit()
-                self.ui.model_response.insertPlainText("\n\n---------------------------------------------------------------------------------------------------------------------------------------------\n\n")
-                self.ui.model_response.moveCursor(QTextCursor.MoveOperation.End)  # 滾動到最新的回應
 
     def update_browser(self, text):
-        self.new_model_message += text
+        # self.new_model_message += text
         self.ui.model_response.insertPlainText(text)
         self.ui.model_response.moveCursor(QTextCursor.MoveOperation.End)  # 滾動到最新的回應
     
     def del_nmsg(self):
         self.new_model_message = ""
         logging.info("清空新訊息變數")
+        self.ui.model_response.insertPlainText("\n\n---------------------------------------------------------------------------------------------------------------------------------------------\n\n")
+        self.ui.model_response.moveCursor(QTextCursor.MoveOperation.End)  # 滾動到最新的回應
+        self.reply_msg = ""                                               # 清空模型回應變數
     
     def remove_emoji_simple(self,text):
         """
@@ -189,6 +197,17 @@ class MyWidget(QtWidgets.QMainWindow):
         clean_text = re.sub(r'\s+', ' ', clean_text).strip()
         
         return clean_text
+    
+    def append_user_message(self,text_browser, message):
+        html = f"""
+        <div style="color:#00ccff;
+                    padding:8px; border-radius:10px; margin:5px 0;">
+            <b>你：</b> {message}<br>
+        </div>
+        """
+        text_browser.append(html)
+        self.ui.model_response.verticalScrollBar().maximum()
+        # self.ui.model_response.moveCursor(QTextCursor.MoveOperation.End)
 
     #影像處理區------------------------------------------
     def take_pic(self):
