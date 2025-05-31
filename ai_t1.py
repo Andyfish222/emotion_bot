@@ -181,9 +181,9 @@ class Ui_MainWindow(object):
         _translate = QtCore.QCoreApplication.translate
         MainWindow.setWindowTitle(_translate("MainWindow", "EmotionBoostBot"))
         self.label_2.setText(_translate("MainWindow", "表情狀態"))
-        self.face_state.setText(_translate("MainWindow", "等待中"))
+        self.face_state.setText(_translate("MainWindow", "未輸入"))
         self.label_3.setText(_translate("MainWindow", "聲音狀態"))
-        self.voice_state.setText(_translate("MainWindow", "等待中"))
+        self.voice_state.setText(_translate("MainWindow", "未輸入"))
         self.take_pic.setText(_translate("MainWindow", "擷取畫面"))
         self.pic_state.setText(_translate("MainWindow", "擷取狀態_檔名"))
         self.label_5.setText(_translate("MainWindow", "語音紀錄"))

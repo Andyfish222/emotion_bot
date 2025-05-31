@@ -75,8 +75,10 @@ class MyWidget(QtWidgets.QMainWindow):
         self.reply_msg = ""               # 初始化模型回應
         self.new_model_message = ""       # 初始化模型新訊息
         init_db()                         # 初始化資料庫
-        self.memory_limit = 30            # 設定記憶限制，預設為 30 條訊息
-        self.user_id = "1"                # 設定使用者 ID，預設為 1
+        self.memory_limit = 50            # 設定記憶限制
+        self.user_id = "3"                # 設定使用者 ID，預設為 1
+        self.think_state = 0              # 設定思考狀態，0 為未思考，1 為正在思考
+        self.print_think = 0
 
         #建立訊號發射器(LLM回應)
         self.signals = StreamSignalEmitter()
@@ -107,6 +109,8 @@ class MyWidget(QtWidgets.QMainWindow):
         self.ui.start_rec.clicked.connect(self.start_recording)
         self.ui.stop_rec.clicked.connect(self.stop_recording)
         self.ui.send_msg.clicked.connect(self.send_msg)
+        self.ui.send_score.clicked.connect(self.feedback)
+        self.ui.msg_input.returnPressed.connect(self.send_msg)
 
     def closeEvent(self):
         self.ocv = False
@@ -117,7 +121,12 @@ class MyWidget(QtWidgets.QMainWindow):
 
     #模型回應區------------------------------------------
     def get_llm_reply(self,user_input,image_result,voice_result):
-        default_msgs = [{"role": "system", "content": '''你是一位情緒智能助手，能夠理解和回應用戶的情感需求，並總是以繁體中文回應。用戶輸入可能包含表情狀態、聲音狀態和用戶回應，你的目標是用好朋友的口吻來使用戶開心。'''}]
+        default_msgs = [{"role": "system", "content": 
+                         '''
+                         你是一位溫暖且善解人意的情緒智能助手，能夠理解和回應用戶的情感需求，並總是以繁體中文回應。
+                         不要輸出括號內的說明（例如：(我會說...)(模擬思考...) 等），請直接用自然語言對話。
+                         用戶輸入可能包含表情狀態、聲音狀態和用戶回應，你的目標是用好朋友的口吻來使用戶開心。
+                         '''}]
         history_msgs = get_recent_messages(user_id=self.user_id, limit=self.memory_limit)  # 獲取最近的對話歷史
         if history_msgs == []: history_msgs = [{"role": "system", "content": "沒有歷史對話"}]  # 如果沒有歷史對話，則使用預設訊息
         if len(history_msgs)==self.memory_limit and history_msgs[0]["role"]=="assistant": history_msgs.pop(0)  # 如果歷史對話超過限制，則刪除最舊的訊息，並確保是偶數條數據
@@ -151,6 +160,7 @@ class MyWidget(QtWidgets.QMainWindow):
                                       """)
 
     def stream_task(self):
+        self.buffer = ""  # 初始化緩衝區
         try:
             self.reply_msg = self.get_llm_reply(
                 user_input = self.ui.msg_input.text(),
@@ -162,7 +172,17 @@ class MyWidget(QtWidgets.QMainWindow):
             logging.info(f"模型回應失敗: {e}")
         for chunk in self.reply_msg:  
             text = chunk.choices[0].delta.content
-            self.signals.new_text.emit(text)
+            if self.think_state == 0:self.signals.new_text.emit(text)
+            if text!= None: self.buffer += text
+             # 檢查開始與結束思考
+            if "<think>" in self.buffer:
+                self.think_state = 1
+                self.buffer = self.buffer.replace("<think>", "")  # 移除標籤
+            if "</think>" in self.buffer:
+                self.think_state = 0
+                self.buffer = self.buffer.replace("</think>", "")  # 移除標籤
+                self.print_think = 0
+            
             if text!= None: self.new_model_message += text
             if chunk.choices[0].finish_reason == "stop":
                 try:
@@ -175,16 +195,24 @@ class MyWidget(QtWidgets.QMainWindow):
                 self.signals.del_new_msg.emit()
 
     def update_browser(self, text):
-        # self.new_model_message += text
-        self.ui.model_response.insertPlainText(text)
-        self.ui.model_response.moveCursor(QTextCursor.MoveOperation.End)  # 滾動到最新的回應
+        if self.think_state == 1 and self.print_think==0:
+            self.ui.model_response.moveCursor(QTextCursor.MoveOperation.End)
+            self.ui.model_response.insertHtml('<span style="color: gray;">[思考中...]</span><br>')
+            self.print_think = 1
+            scroll_bar = self.ui.model_response.verticalScrollBar()
+            scroll_bar.setValue(scroll_bar.maximum())
+        elif self.think_state == 0:
+            # self.new_model_message += text
+            self.ui.model_response.insertPlainText(text)
+            self.ui.model_response.moveCursor(QTextCursor.MoveOperation.End)  # 滾動到最新的回應
     
     def del_nmsg(self):
         self.new_model_message = ""
         logging.info("清空新訊息變數")
         self.ui.model_response.insertPlainText("\n\n---------------------------------------------------------------------------------------------------------------------------------------------\n\n")
         self.ui.model_response.moveCursor(QTextCursor.MoveOperation.End)  # 滾動到最新的回應
-        self.reply_msg = ""                                               # 清空模型回應變數
+        self.reply_msg = ""            
+        self.think_state = 0                                  
     
     def remove_emoji_simple(self,text):
         """
@@ -206,9 +234,29 @@ class MyWidget(QtWidgets.QMainWindow):
         </div>
         """
         text_browser.append(html)
-        self.ui.model_response.verticalScrollBar().maximum()
-        # self.ui.model_response.moveCursor(QTextCursor.MoveOperation.End)
+        scroll_bar = text_browser.verticalScrollBar()
+        scroll_bar.setValue(scroll_bar.maximum())
 
+    def feedback(self):
+        score = str(self.ui.score_bar.value())
+        fb_dict = {"0": "",
+                   "1": "這次的回應讓我感覺更糟，完全沒有幫助",
+                   "2": "回覆偏離了我的需求，我感覺沒什麼幫助",
+                   "3": "回應還可以，但沒有實質幫助我處理情緒",
+                   "4": "內容有些相關，但還不夠貼近我的情況",
+                   "5": "用戶覺得心情有變好一點了",
+                   "6": "有些建議還不錯，我開始感覺有些改善",
+                   "7": "回應對我來說蠻有幫助的，讓我釐清了一些思緒",
+                   "8": "你的建議讓我心情明顯改善，感覺好多了",
+                   "9": "很棒的回應，真心感受到系統的溫度與理解",
+                   "10": "超級棒！這正是我需要的，感覺被理解與支持"}  # 評分字典
+        if score!="0": 
+            try:
+                save_message(user_id=self.user_id, role="user", content=f"{fb_dict[score]}")  # 儲存用戶評分
+            except Exception as e:
+                logging.error(f"儲存用戶評分失敗: {e}")
+        logging.info(f"用戶評語: {fb_dict[score]}")
+        
     #影像處理區------------------------------------------
     def take_pic(self):
         self.photo = True

@@ -70,7 +70,7 @@
      <item>
       <widget class="QLabel" name="face_state">
        <property name="text">
-        <string>等待中</string>
+        <string>未輸入</string>
        </property>
       </widget>
      </item>
@@ -98,7 +98,7 @@
      <item>
       <widget class="QLabel" name="voice_state">
        <property name="text">
-        <string>等待中</string>
+        <string>未輸入</string>
        </property>
       </widget>
      </item>
