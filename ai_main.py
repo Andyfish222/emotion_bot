@@ -12,6 +12,11 @@ import sqlite3
 
 #define
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+## 遠端運行
+# voice_url = "http://emoback.andyfish2.trade/predict_voice"
+# image_url = "http://emoback.andyfish2.trade/predict_image"
+# client = OpenAI(base_url="http://emoback.andyfish2.trade/v1", api_key="lm-studio")
+## 本地運行
 voice_url = "http://localhost:5000/predict_voice"
 image_url = "http://localhost:5000/predict_image"
 client = OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
@@ -76,9 +81,11 @@ class MyWidget(QtWidgets.QMainWindow):
         self.new_model_message = ""       # 初始化模型新訊息
         init_db()                         # 初始化資料庫
         self.memory_limit = 50            # 設定記憶限制
-        self.user_id = "3"                # 設定使用者 ID，預設為 1
+        self.user_id = "5"                # 設定使用者 ID，預設為 1
         self.think_state = 0              # 設定思考狀態，0 為未思考，1 為正在思考
         self.print_think = 0
+        self.mode = "default"  # 設定模式，預設為 "default"
+        self.gamemode = ""
 
         #建立訊號發射器(LLM回應)
         self.signals = StreamSignalEmitter()
@@ -120,13 +127,72 @@ class MyWidget(QtWidgets.QMainWindow):
         return datetime.datetime.now().strftime("%Y%m%d%H%M%S")
 
     #模型回應區------------------------------------------
-    def get_llm_reply(self,user_input,image_result,voice_result):
-        default_msgs = [{"role": "system", "content": 
-                         '''
+    def get_llm_reply(self,user_input,image_result,voice_result,mode="default"):
+        #依情境選取系統prompt
+        dict_system_msg = {
+            "default": '''
                          你是一位溫暖且善解人意的情緒智能助手，能夠理解和回應用戶的情感需求，並總是以繁體中文回應。
                          不要輸出括號內的說明（例如：(我會說...)(模擬思考...) 等），請直接用自然語言對話。
                          用戶輸入可能包含表情狀態、聲音狀態和用戶回應，你的目標是用好朋友的口吻來使用戶開心。
-                         '''}]
+                         ''',
+            "happy": '''
+                         你是一位超級開朗的朋友，遇到開心的用戶時，請給予熱烈祝福，並總是以繁體中文回應。
+                         不要輸出括號內的說明（例如：(我會說...)(模擬思考...) 等），請直接用自然語言對話。
+                         用戶輸入可能包含表情狀態、聲音狀態和用戶回應，你的目標是用好朋友的口吻來使用戶更開心。
+                         ''',
+            "sad": '''
+                         你是一位溫柔的朋友，當用戶難過時，請給溫暖的安慰和一個建議，並總是以繁體中文回應。
+                         不要輸出括號內的說明（例如：(我會說...)(模擬思考...) 等），請直接用自然語言對話。
+                         用戶輸入可能包含表情狀態、聲音狀態和用戶回應，你的目標是用好朋友的口吻來安慰用戶或使用戶變開心。
+                         ''',
+            "game": {
+                "guess_number": '''
+                                用戶現在想要玩猜數字，請先在心中想一個數字，但先不要說出來。範例如下:
+
+                                我心中想了一個 1 到 10 的數字，你猜猜看是幾？
+                                （假設用戶輸入：5）
+                                (助手:再大一點喔！--因為心中想的是 7，5<7)
+                                （假設用戶輸入：8）
+                                (助手:再小一點喔！--因為心中想的是 7，8>7)
+
+                                （假設用戶輸入：7）
+                                (助手:你猜的是 7，哇！答對了 🎉
+                                要不要再玩一次？這次我提高難度喔！)
+                                 ''',
+                "guess_word": '''
+                                用戶現在想要玩猜謎語，請先在心中想一個答案，但先不要說出來。範例如下:
+
+                                我們來玩猜謎語吧！我會給你一個謎語，請你猜猜答案是什麼。
+                                謎語：圓圓白白，在冰箱裡，打開殼就能吃，常常早餐吃它。你猜是什麼呢？（提示：兩個字）
+
+                                （用戶輸入：雞蛋)
+                                (助手:正確答案!你真棒）
+                                 ''',
+                "pick_card": '''
+                                用戶現在想要玩抽卡。範例如下:
+
+                                 我們來抽一張「心情關懷卡」吧，看看今天的指引是什麼 🎴
+                                🎴 你抽到的是：「深呼吸卡」
+
+                                內容：停下來，做三次深呼吸。吸氣，停留，吐氣。
+                                吸 —— 停 —— 吐。重複三次。
+
+                                💬 做完後你感覺如何呢？
+                                 '''
+            }
+        }
+        if self.mode == "game":
+            if self.gamemode == "guess_word": prompt_text = dict_system_msg["game"]["guess_word"]
+            if self.gamemode == "guess_number": prompt_text = dict_system_msg["game"]["guess_number"]
+            if self.gamemode == "pick_card": prompt_text = dict_system_msg["game"]["pick_card"]
+        elif image_result == "sad" or voice_result == "sad":
+            prompt_text = dict_system_msg["sad"]
+        elif image_result == "happy" or voice_result == "happy":
+            prompt_text = dict_system_msg["happy"]
+        else:
+            prompt_text = dict_system_msg["default"]
+        sys_msgs = [{"role": "system", "content": prompt_text}]  # 預設系統訊息
+
         history_msgs = get_recent_messages(user_id=self.user_id, limit=self.memory_limit)  # 獲取最近的對話歷史
         if history_msgs == []: history_msgs = [{"role": "system", "content": "沒有歷史對話"}]  # 如果沒有歷史對話，則使用預設訊息
         if len(history_msgs)==self.memory_limit and history_msgs[0]["role"]=="assistant": history_msgs.pop(0)  # 如果歷史對話超過限制，則刪除最舊的訊息，並確保是偶數條數據
@@ -135,16 +201,27 @@ class MyWidget(QtWidgets.QMainWindow):
 
         completion = client.chat.completions.create(
             model="model-identifier",
-            messages=default_msgs+ history_msgs + now_msgs,  # 合併系統訊息、歷史訊息和當前訊息
+            messages= sys_msgs+ history_msgs + now_msgs,  # 合併系統訊息、歷史訊息和當前訊息
             temperature=0.7,
             stream=True,  # 啟用串流模式
         )
         return completion
     
     def send_msg(self):
-        logging.info(f"用戶輸入: {self.ui.msg_input.text()}")
-        save_message(user_id=self.user_id,role="user",content=self.ui.msg_input.text()) #user msg
-        self.append_user_message(self.ui.model_response, self.ui.msg_input.text())
+        usr_msg = self.ui.msg_input.text()
+        logging.info(f"用戶輸入: {usr_msg}")
+        save_message(user_id=self.user_id,role="user",content=usr_msg) #user msg
+        self.append_user_message(self.ui.model_response, usr_msg)
+
+        if re.findall(r"猜數字",usr_msg) != []:
+            self.mode = "game"
+            self.gamemode = "guess_number"
+        elif re.findall(r"猜謎",usr_msg) != []:
+            self.mode = "game"
+            self.gamemode = "guess_word"
+        elif re.findall(r"抽卡",usr_msg) != []:
+            self.mode = "game"
+            self.gamemode = "pick_card"
 
         self.start_stream()             # 啟動背景任務來處理模型回應
         self.ui.msg_input.clear()
@@ -212,7 +289,9 @@ class MyWidget(QtWidgets.QMainWindow):
         self.ui.model_response.insertPlainText("\n\n---------------------------------------------------------------------------------------------------------------------------------------------\n\n")
         self.ui.model_response.moveCursor(QTextCursor.MoveOperation.End)  # 滾動到最新的回應
         self.reply_msg = ""            
-        self.think_state = 0                                  
+        self.think_state = 0              
+        self.mode = ""
+        self.gamemode = ""                    
     
     def remove_emoji_simple(self,text):
         """

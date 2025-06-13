@@ -9,6 +9,7 @@ import os
 import numpy as np
 from deepface import DeepFace
 import cv2
+from flask_cors import CORS
 
 # 是否使用 TTS 模型
 is_tts = False  
@@ -52,6 +53,7 @@ def predictEmotion(wavPath):
 
 # 初始化 Flask
 app = Flask(__name__)
+CORS(app)  # 啟用 CORS 支援
 
 #聲音辨識 API
 @app.route("/predict_voice", methods=["POST"])
